@@ -3,13 +3,13 @@ import "./globals.css";
 import { ToastProvider } from "@/components/ui/ToastProvider";
 
 export const metadata: Metadata = {
-  title: "Denoise Studio",
+  title: "Noiseless",
   description: "Professional photo denoising powered by OpenCV Non-Local Means",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Denoise",
+    title: "Noiseless",
   },
   icons: {
     apple: "/icons/apple-touch-icon.png",

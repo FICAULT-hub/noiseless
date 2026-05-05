@@ -1,4 +1,4 @@
-# Denoise Studio
+# Noiseless
 
 Professional photo denoising web app for Lightroom Mobile exports. Applies OpenCV Non-Local Means (NLM) denoising with per-channel luminance and color noise controls. Works as a PWA on iPad and desktop.
 

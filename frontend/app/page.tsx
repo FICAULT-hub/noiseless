@@ -212,7 +212,7 @@ export default function HomePage() {
               <path d="M12 3a9 9 0 100 18A9 9 0 0012 3zm0 2a7 7 0 110 14A7 7 0 0112 5zm0 2a5 5 0 100 10A5 5 0 0012 7z" />
             </svg>
           </div>
-          <h1 className="text-base font-semibold text-white">Denoise Studio</h1>
+          <h1 className="text-base font-semibold text-white">Noiseless</h1>
           <span className="ml-auto text-xs text-[#444]">v1.0</span>
         </div>
       </header>

@@ -1,6 +1,6 @@
 {
-  "name": "Denoise Studio",
-  "short_name": "Denoise",
+  "name": "Noiseless",
+  "short_name": "Noiseless",
   "description": "Professional photo denoising powered by OpenCV Non-Local Means",
   "start_url": "/",
   "display": "standalone",
