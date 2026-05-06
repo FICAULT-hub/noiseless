@@ -20,7 +20,11 @@ import numpy as np
 import scipy.ndimage
 from PIL import Image
 
-import face_aware
+try:
+    import face_aware as _face_aware
+    _FACE_AWARE_AVAILABLE = True
+except Exception:
+    _FACE_AWARE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -480,7 +484,9 @@ def _run_stages(rgb_float: np.ndarray, params: dict) -> np.ndarray:
 
     # Stage 4 — Face-aware spatial adaptation
     try:
-        adapted_L = face_aware.apply(
+        if not _FACE_AWARE_AVAILABLE:
+            raise ImportError("face_aware not loaded")
+        adapted_L = _face_aware.apply(
             denoised_L=recovered_L,
             original_L=L_norm,
             params=params,
