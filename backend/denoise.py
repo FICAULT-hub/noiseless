@@ -2,6 +2,7 @@
 
 import io
 import logging
+import math
 from typing import List, Optional, Tuple
 
 import cv2
@@ -14,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 TEMPLATE_WINDOW = 7
 SEARCH_WINDOW = 21
+# Tiles keep peak memory O(tile²) regardless of image size.
+# Overlap = SEARCH_WINDOW so every border pixel has full NLM context.
+TILE_SIZE = 1024
+TILE_OVERLAP = SEARCH_WINDOW
 H_MIN = 1.0
 H_MAX = 14.0
 H_COLOR_MIN = 1.0
@@ -32,33 +37,67 @@ def _compute_nlm_params(luminance_strength: float, color_strength: float) -> Tup
     return h, h_color
 
 
+def _nlm(bgr: np.ndarray, h_param: float, h_color: float) -> np.ndarray:
+    return cv2.fastNlMeansDenoisingColored(
+        bgr,
+        None,
+        h=h_param,
+        hColor=h_color,
+        templateWindowSize=TEMPLATE_WINDOW,
+        searchWindowSize=SEARCH_WINDOW,
+    )
+
+
+def _denoise_tiled(bgr: np.ndarray, h_param: float, h_color: float) -> np.ndarray:
+    """Tile-based NLM: process TILE_SIZE×TILE_SIZE chunks with TILE_OVERLAP padding
+    so border pixels have full search context. Peak memory is O(tile²), not O(image²)."""
+    img_h, img_w = bgr.shape[:2]
+    result = np.empty_like(bgr)
+    total = math.ceil(img_h / TILE_SIZE) * math.ceil(img_w / TILE_SIZE)
+    idx = 0
+
+    y = 0
+    while y < img_h:
+        y_end = min(y + TILE_SIZE, img_h)
+        x = 0
+        while x < img_w:
+            x_end = min(x + TILE_SIZE, img_w)
+            idx += 1
+            logger.info("NLM tile %d/%d (%dx%d)", idx, total, x_end - x, y_end - y)
+
+            pad_x0 = max(0, x - TILE_OVERLAP)
+            pad_y0 = max(0, y - TILE_OVERLAP)
+            pad_x1 = min(img_w, x_end + TILE_OVERLAP)
+            pad_y1 = min(img_h, y_end + TILE_OVERLAP)
+
+            denoised_padded = _nlm(bgr[pad_y0:pad_y1, pad_x0:pad_x1], h_param, h_color)
+
+            inner_y0 = y - pad_y0
+            inner_x0 = x - pad_x0
+            result[y:y_end, x:x_end] = denoised_padded[
+                inner_y0 : inner_y0 + (y_end - y),
+                inner_x0 : inner_x0 + (x_end - x),
+            ]
+            x = x_end
+        y = y_end
+
+    return result
+
+
 def denoise_array(
     bgr: np.ndarray,
     luminance_strength: float,
     color_strength: float,
 ) -> np.ndarray:
-    """Apply cv2.fastNlMeansDenoisingColored to a BGR uint8 array.
+    h_param, h_color = _compute_nlm_params(luminance_strength, color_strength)
+    img_h, img_w = bgr.shape[:2]
+    mp = (img_h * img_w) / 1_000_000
+    logger.info("NLM h=%.2f hColor=%.2f image=%dx%d (%.1fMP)", h_param, h_color, img_w, img_h, mp)
 
-    Args:
-        bgr: Input BGR uint8 image array.
-        luminance_strength: Slider value 0.0–1.0 for luminance noise.
-        color_strength: Slider value 0.0–1.0 for color noise.
+    if img_h <= TILE_SIZE and img_w <= TILE_SIZE:
+        return _nlm(bgr, h_param, h_color)
 
-    Returns:
-        Denoised BGR uint8 array of the same shape.
-    """
-    h, h_color = _compute_nlm_params(luminance_strength, color_strength)
-    logger.debug("NLM params: h=%.2f hColor=%.2f", h, h_color)
-
-    result = cv2.fastNlMeansDenoisingColored(
-        bgr,
-        None,
-        h=h,
-        hColor=h_color,
-        templateWindowSize=TEMPLATE_WINDOW,
-        searchWindowSize=SEARCH_WINDOW,
-    )
-    return result
+    return _denoise_tiled(bgr, h_param, h_color)
 
 
 def denoise_crops(

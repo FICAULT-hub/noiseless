@@ -55,8 +55,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Thread pool for NLM processing
-_executor = ThreadPoolExecutor(max_workers=int(os.getenv("WORKER_THREADS", "2")))
+# Single worker: NLM is memory-intensive and must not run concurrently
+_executor = ThreadPoolExecutor(max_workers=int(os.getenv("WORKER_THREADS", "1")))
 
 # ---------------------------------------------------------------------------
 # Constants
