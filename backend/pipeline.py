@@ -12,6 +12,7 @@ Pipeline stages:
 
 import io
 import logging
+import math
 import traceback
 from typing import Dict
 
@@ -453,18 +454,18 @@ def _stage5_sharpen(adapted_L, params) -> np.ndarray:
         return adapted_L.copy()
 
 
-# ── Public entry points ──────────────────────────────────────────────────────
+# ── Tiling constants ─────────────────────────────────────────────────────────
+# Images larger than this are processed in spatial tiles so peak memory stays
+# bounded to O(tile²) regardless of input resolution.
+_MAX_DIRECT_MP  = 8          # MP threshold: below this, process whole image
+_TILE_SIZE      = 2048       # pixels per tile side
+# Overlap covers: wavelet boundary (db4 level-3 ≈ 24px), guided filter
+# radius (12px), Gaussian sigma-2 blur (6px), USM — 64px is comfortably safe.
+_TILE_OVERLAP   = 64
 
-def _run_stages(rgb_float: np.ndarray, params: dict) -> np.ndarray:
-    """Execute all pipeline stages on a float32 RGB image.
 
-    Args:
-        rgb_float: Input, float32, shape (H, W, 3), range [0, 1], RGB.
-        params: Parameter dict from compute_params().
-
-    Returns:
-        Denoised image, float32, shape (H, W, 3), range [0, 1], RGB.
-    """
+def _run_stages_direct(rgb_float: np.ndarray, params: dict) -> np.ndarray:
+    """Run all six pipeline stages on a single float32 RGB tile/image."""
     img_h, img_w = rgb_float.shape[:2]
     mp = img_h * img_w / 1_000_000
     logger.info("Pipeline start: %dx%d (%.1fMP)", img_w, img_h, mp)
@@ -502,6 +503,62 @@ def _run_stages(rgb_float: np.ndarray, params: dict) -> np.ndarray:
     result = _lab_norm_to_rgb(sharpened_L, clean_A, clean_B)  # float32 (H,W,3) [0,1]
     logger.info("Pipeline complete")
     return result
+
+
+def _run_stages_tiled(rgb_float: np.ndarray, params: dict) -> np.ndarray:
+    """Process a large image by tiling _run_stages_direct with overlap.
+
+    Each tile is extracted with _TILE_OVERLAP padding on every side so
+    wavelet boundary artifacts and filter edge effects are hidden in the
+    discarded overlap region. Peak memory is O(tile²), not O(image²).
+
+    Args:
+        rgb_float: Input, float32, shape (H, W, 3), range [0, 1], RGB.
+        params: Parameter dict from compute_params().
+
+    Returns:
+        Denoised image, float32, shape (H, W, 3), range [0, 1], RGB.
+    """
+    img_h, img_w = rgb_float.shape[:2]
+    result = np.empty_like(rgb_float)
+    total = math.ceil(img_h / _TILE_SIZE) * math.ceil(img_w / _TILE_SIZE)
+    idx = 0
+
+    y = 0
+    while y < img_h:
+        y_end = min(y + _TILE_SIZE, img_h)
+        x = 0
+        while x < img_w:
+            x_end = min(x + _TILE_SIZE, img_w)
+            idx += 1
+            logger.info("Pipeline tile %d/%d", idx, total)
+
+            pad_y0 = max(0, y - _TILE_OVERLAP)
+            pad_x0 = max(0, x - _TILE_OVERLAP)
+            pad_y1 = min(img_h, y_end + _TILE_OVERLAP)
+            pad_x1 = min(img_w, x_end + _TILE_OVERLAP)
+
+            tile = rgb_float[pad_y0:pad_y1, pad_x0:pad_x1]        # float32 (th, tw, 3)
+            denoised_padded = _run_stages_direct(tile, params)     # float32 (th, tw, 3)
+
+            inner_y0 = y - pad_y0
+            inner_x0 = x - pad_x0
+            result[y:y_end, x:x_end] = denoised_padded[
+                inner_y0 : inner_y0 + (y_end - y),
+                inner_x0 : inner_x0 + (x_end - x),
+            ]
+            x = x_end
+        y = y_end
+
+    return result
+
+
+def _run_stages(rgb_float: np.ndarray, params: dict) -> np.ndarray:
+    """Dispatch to direct or tiled pipeline depending on image resolution."""
+    img_h, img_w = rgb_float.shape[:2]
+    if img_h * img_w <= _MAX_DIRECT_MP * 1_000_000:
+        return _run_stages_direct(rgb_float, params)
+    return _run_stages_tiled(rgb_float, params)
 
 
 def run(image_bytes: bytes, params: dict) -> np.ndarray:
